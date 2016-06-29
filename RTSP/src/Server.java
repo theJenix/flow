@@ -12,6 +12,8 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.StringTokenizer;
 
 import javax.swing.JFrame;
@@ -52,6 +54,7 @@ public class Server extends JFrame implements ActionListener {
 	private final static int PLAY = 4;
 	private final static int PAUSE = 5;
 	private final static int TEARDOWN = 6;
+    private final static int DESCRIBE = 7;
 
 	private static int state;					// RTSP Server state == INIT or READY or PLAY
 	private Socket rtspSocket;					// socket used to send/receive RTSP messages
@@ -148,7 +151,9 @@ public class Server extends JFrame implements ActionListener {
 			String requestTypeString = new String(tokens.nextToken());
 
 			// convert to request_type structure:
-			if (requestTypeString.compareTo("SETUP") == 0) {
+			if (requestTypeString.compareTo("DESCRIBE") == 0) {
+                requestType = DESCRIBE;
+			} else if (requestTypeString.compareTo("SETUP") == 0) {
 				requestType = SETUP;
 			} else if (requestTypeString.compareTo("PLAY") == 0) {
 				requestType = PLAY;
@@ -164,19 +169,33 @@ public class Server extends JFrame implements ActionListener {
 			}
 
 			// parse the seqNumLine and extract CSeq field
-			String seqNumLine = rtspReader.readLine();
-			System.out.println(seqNumLine);
-			tokens = new StringTokenizer(seqNumLine);
-			tokens.nextToken();
-			rtspSeqNb = Integer.parseInt(tokens.nextToken());
+//			String seqNumLine = rtspReader.readLine();
+//			System.out.println(seqNumLine);
+//			tokens = new StringTokenizer(seqNumLine);
+//			tokens.nextToken();
+//			rtspSeqNb = Integer.parseInt(tokens.nextToken());
 
-			// get lastLine
-			String lastLine = rtspReader.readLine();
-			System.out.println(lastLine);
+			Map<String, String> fields = new HashMap<String, String>();
+			while (rtspReader.ready()) {
+			    String line = rtspReader.readLine();
+			    System.out.println(line);
+			    String[] parts = line.split(":\\s*");
+			    if (parts.length != 2) {
+			        continue; //bogus line
+			    }
+			    fields.put(parts[0], parts[1]);
+			    
+			}
+			
+	         rtspSeqNb = Integer.parseInt(fields.get("CSeq"));
 
-			if (requestType == SETUP) {
+//			// get lastLine
+//			String lastLine = rtspReader.readLine();
+//			System.out.println(lastLine);
+//
+			if (requestType == SETUP && fields.containsKey("")) {
 				// extract rtpDestPort from lastLine
-				tokens = new StringTokenizer(lastLine);
+				tokens = new StringTokenizer(fields.get(""));
 				for (int i = 0; i < 3; i++) {
 					tokens.nextToken(); // skip unused stuff
 				}
@@ -203,6 +222,40 @@ public class Server extends JFrame implements ActionListener {
 		}
 	}
 
+	private void sendRTSPdescribeResponse() {
+	        try {
+                String str = "v=0" + CRLF +
+                             "o=- " + rtspId + " " + rtspId + " IN IP4 127.0.0.1" + CRLF + 
+                             "s=Video" + CRLF + 
+                             "c=IN IP4 0.0.0.0" + CRLF + 
+//                             "b=AS:61" + CRLF + 
+                             "t=0 0" + CRLF + 
+                             "m=video 0 RTP/AVP 96" + CRLF + 
+                             "a=control:trackID=0" + CRLF + 
+                             "a=range:npt=0-7.741000" + CRLF + 
+                             "a=length:npt=7.741000" + CRLF + 
+                             "a=rtpmap:96 x-motion-jpeg/5545" + CRLF + 
+                             "a=mimetype:string;\"video/x-motion-jpeg\"" + CRLF;
+//                             "a=AvgBitRate:integer;304018" + CRLF + 
+//                             "a=StreamName:string;\"hinted video track\"" + CRLF;
+                             
+                rtspWriter.write("RTSP/1.0 200 OK" + CRLF);
+                rtspWriter.write("CSeq: " + rtspSeqNb + CRLF);
+                rtspWriter.write("Session: " + rtspId + CRLF);
+                rtspWriter.write("Content-Type: application/sdp" + CRLF);
+                rtspWriter.write("Content-Base: rtsp://localhost:5545/movie.Mjpeg" + CRLF);
+                rtspWriter.write("Content-Length: " + str.getBytes().length +  CRLF);
+                rtspWriter.write("" + CRLF);
+                rtspWriter.write(str);
+                 
+                rtspWriter.flush();
+
+	            // System.out.println("RTSP Server - Sent response to Client.");
+	        } catch (Exception ex) {
+	            System.out.println("Exception caught: " + ex);
+	            System.exit(0);
+	        }
+	    }
 
 	public static void main(String argv[]) throws Exception {
 
@@ -259,11 +312,20 @@ public class Server extends JFrame implements ActionListener {
 				// Send response
 				server.sendRTSPresponse();
 
+				videoName = "movie.Mjpeg";
 				// init the VideoStream object:
 				server.video = new VideoStream(videoName);
 
 				// init RTP socket
 				server.rtpSocket = new DatagramSocket();
+			}
+			
+			if (requestType == DESCRIBE) {
+			    server.sendRTSPdescribeResponse();
+			}
+			
+			if (requestType == TEARDOWN) {
+			    done = true;
 			}
 		}
 
